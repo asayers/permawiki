@@ -29,34 +29,49 @@ import Web.PathPieces
 import Web.Spock.Safe
 import Web.Spock.Shared
 
-markdown :: T.Text -> ActionT IO a
-markdown = html . TL.toStrict . renderHtml . MD.markdown def . TL.fromStrict
+renderMarkdown :: T.Text -> T.Text
+renderMarkdown = TL.toStrict . renderHtml . MD.markdown def . TL.fromStrict
 
 main :: IO ()
 main = runSpock 9876 $ spockT id $ do
     get root $
         text "Hello World!"
+
     get "new" $
         html newPageView
     post "new" $ do
         contents <- param' "contents"
         (pageId, pageHash) <- liftIO $ createPage contents
-        redirect $ "/perma/" <> showHash pageHash
-    get ("edit" <//> var) $
-        html . editPageView
+        redirect $ "/page/" <> toPathPiece pageId
+
+    get ("edit" <//> var) $ \pageId -> do
+        versions <- liftIO $ getPageVersions pageId
+        html $ T.unlines
+            [ "<h2>You're editing page <pre>" <> toPathPiece pageId <> "</pre></h2>"
+            , renderMarkdown $ pageHeader pageId versions
+            , editPageView pageId
+            ]
     post ("edit" <//> var) $ \pageId -> do
         contents <- param' "contents"
         (pageId, pageHash) <- liftIO $ editPage pageId contents
-        redirect $ "/perma/" <> showHash pageHash
+        redirect $ "/page/" <> toPathPiece pageId
+
     get ("page" <//> var) $ \pageId -> do
         versions <- liftIO $ getPageVersions pageId
         contents <- liftIO $ runMaybeT $
             MaybeT (return $ preview (ix 0) (reverse versions)) >>=
             MaybeT . getPageInstanceContents
-        markdown $ pageHeader pageId versions <> fromMaybe "not found" contents
+        html $ renderMarkdown $ T.unlines
+            [ "## You're viewing page `" <> toPathPiece pageId <> "`"
+            , pageHeader pageId versions
+            , fromMaybe "not found" contents
+            ]
     get ("perma" <//> var) $ \pageHash -> do
         contents <- liftIO $ getPageInstanceContents pageHash
-        markdown $ fromMaybe "not found" contents
+        maybe notFound (html . renderMarkdown) contents
+
+-- TODO: Status 404
+notFound = text "not found"
 
 pageHeader :: PageId -> [PageHash] -> T.Text
 pageHeader pageId versions = T.unlines $
