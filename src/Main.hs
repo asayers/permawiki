@@ -32,8 +32,24 @@ import Web.Spock.Shared
 renderMarkdown :: T.Text -> T.Text
 renderMarkdown = TL.toStrict . renderHtml . MD.markdown def . TL.fromStrict
 
+pagesDir :: FilePath
+pagesDir = "pages"
+
+permaDir :: FilePath
+permaDir = "perma"
+
+setupDirs :: IO ()
+setupDirs = do
+    createDirectoryIfMissing True pagesDir
+    createDirectoryIfMissing True permaDir
+
 main :: IO ()
-main = runSpock 9876 $ spockT id $ do
+main = do
+    setupDirs
+    runSpock 9876 (spockT id routes)
+
+routes :: SpockT IO ()
+routes = do
     get root $ do
         pages <- liftIO getPages
         html $ renderMarkdown $ rootView pages
@@ -156,17 +172,17 @@ editPage pageId contents = do
 writeNewPageInstanceToDisk :: T.Text -> IO PageHash
 writeNewPageInstanceToDisk contents = do
     let pageHash = mkHash contents
-    let filepath = "perma" </> T.unpack (showHash pageHash)
+    let filepath = pageInstanceFilepath pageHash
     exists <- liftIO $ doesFileExist filepath
     when exists $ error "file already exists"
     T.writeFile filepath contents
     return pageHash
 
 pageFilepath :: PageId -> FilePath
-pageFilepath pageId = "pages" </> T.unpack (toPathPiece pageId)
+pageFilepath pageId = pagesDir </> T.unpack (toPathPiece pageId)
 
 pageInstanceFilepath :: PageHash -> FilePath
-pageInstanceFilepath pageHash = "perma" </> T.unpack (showHash pageHash)
+pageInstanceFilepath pageHash = permaDir </> T.unpack (showHash pageHash)
 
 appendVersionToLog :: PageId -> PageHash -> IO ()
 appendVersionToLog pageId pageHash = do
@@ -191,7 +207,7 @@ getPageInstanceContents pageHash = do
 
 getPages :: IO [PageId]
 getPages = do
-    filenames <- getDirectoryContents "pages"
+    filenames <- getDirectoryContents pagesDir
     return $ mapMaybe (fromPathPiece . T.pack . takeBaseName) filenames
 
 safeReadFile :: FilePath -> IO (Maybe T.Text)
