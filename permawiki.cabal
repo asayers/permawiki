@@ -23,6 +23,7 @@ executable permawiki
                      , aeson
                      , hashable
                      , path-pieces
+                     , uuid
                      , data-default-class
                      , blaze-html
                      , markdown

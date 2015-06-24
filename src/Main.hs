@@ -13,6 +13,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
 import Data.Typeable
+import qualified Data.UUID as UUID
+import qualified Data.UUID.V4 as UUID
 import qualified Text.Blaze.Html4.Strict as H
 import qualified Text.Blaze.Html4.Strict.Attributes as A
 import Text.Blaze.Html.Renderer.Text (renderHtml)
@@ -32,9 +34,8 @@ main = runSpock 9876 $ spockT id $ do
         text "Hello World!"
     get "new" $ newPageView
     post "new" $ do
-        pageId <- param' "page-id"
         contents <- param' "contents"
-        pageHash <- liftIO $ createPage pageId contents
+        pageHash <- liftIO $ createPage contents
         redirect $ "/perma/" <> showHash pageHash
     get ("perma" <//> var) $ \pageHash -> do
         unless (verifyHash pageHash) $ error "invalid hash"
@@ -49,9 +50,6 @@ newPageView :: ActionT IO a
 newPageView = do
     html $ T.unlines
         [ "<form action='/new' method='POST'>"
-        , "Page Id:<br>"
-        , "<input type='text' name='page-id'>"
-        , "<br>"
         , "Contents:<br>"
         , "<input type='text' name='contents'>"
         , "<br><br>"
@@ -62,8 +60,15 @@ newPageView = do
 verifyHash _ = True
 verifyContents _ _ = True
 
-newtype PageId = PageId Int deriving (Show, PathPiece)
+newtype PageId = PageId { unPageId :: UUID.UUID } deriving Show
 newtype PageHash = PageHash { unPageHash :: Int } deriving Show
+
+instance PathPiece PageId where
+    fromPathPiece = fmap PageId . UUID.fromString . T.unpack
+    toPathPiece = T.pack . UUID.toString . unPageId
+
+newPageId :: IO PageId
+newPageId = PageId <$> UUID.nextRandom
 
 showHash :: PageHash -> T.Text
 showHash = T.pack . show . unPageHash
@@ -71,8 +76,9 @@ showHash = T.pack . show . unPageHash
 mkHash :: T.Text -> PageHash
 mkHash = PageHash . hash
 
-createPage :: PageId -> T.Text -> IO PageHash
-createPage pageId contents = do
+createPage :: T.Text -> IO PageHash
+createPage contents = do
+    pageId <- newPageId
     let pageHash = mkHash contents
     let filepath = "perma" </> T.unpack (showHash pageHash)
     exists <- liftIO $ doesFileExist filepath
