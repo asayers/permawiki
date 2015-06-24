@@ -37,6 +37,11 @@ main = runSpock 9876 $ spockT id $ do
         contents <- param' "contents"
         pageHash <- liftIO $ createPage contents
         redirect $ "/perma/" <> showHash pageHash
+    get ("edit" <//> var) $ editPageView
+    post ("edit" <//> var) $ \pageId -> do
+        contents <- param' "contents"
+        pageHash <- liftIO $ editPage pageId contents
+        redirect $ "/perma/" <> showHash pageHash
     get ("perma" <//> var) $ \pageHash -> do
         unless (verifyHash pageHash) $ error "invalid hash"
         let filepath = "perma" </> pageHash
@@ -49,7 +54,20 @@ main = runSpock 9876 $ spockT id $ do
 newPageView :: ActionT IO a
 newPageView = do
     html $ T.unlines
-        [ "<form action='/new' method='POST'>"
+        [ "<h1>New page</h1>"
+        , "<form action='/new' method='POST'>"
+        , "Contents:<br>"
+        , "<input type='text' name='contents'>"
+        , "<br><br>"
+        , "<input type='submit' value='Submit'>"
+        , "</form>"
+        ]
+
+editPageView :: PageId -> ActionT IO a
+editPageView pageId = do
+    html $ T.unlines
+        [ "<h1>Page Id: " <> toPathPiece pageId <> "</h1>"
+        , "<form action='/edit/" <> toPathPiece pageId <> "' method='POST'>"
         , "Contents:<br>"
         , "<input type='text' name='contents'>"
         , "<br><br>"
@@ -79,6 +97,15 @@ mkHash = PageHash . hash
 createPage :: T.Text -> IO PageHash
 createPage contents = do
     pageId <- newPageId
+    let pageHash = mkHash contents
+    let filepath = "perma" </> T.unpack (showHash pageHash)
+    exists <- liftIO $ doesFileExist filepath
+    when exists $ error "file already exists"
+    T.writeFile filepath contents
+    return $ mkHash contents
+
+editPage :: PageId -> T.Text -> IO PageHash
+editPage pageId contents = do
     let pageHash = mkHash contents
     let filepath = "perma" </> T.unpack (showHash pageHash)
     exists <- liftIO $ doesFileExist filepath
