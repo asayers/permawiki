@@ -35,12 +35,12 @@ main = runSpock 9876 $ spockT id $ do
     get "new" $ newPageView
     post "new" $ do
         contents <- param' "contents"
-        pageHash <- liftIO $ createPage contents
+        (pageId, pageHash) <- liftIO $ createPage contents
         redirect $ "/perma/" <> showHash pageHash
     get ("edit" <//> var) $ editPageView
     post ("edit" <//> var) $ \pageId -> do
         contents <- param' "contents"
-        pageHash <- liftIO $ editPage pageId contents
+        (pageId, pageHash) <- liftIO $ editPage pageId contents
         redirect $ "/perma/" <> showHash pageHash
     get ("perma" <//> var) $ \pageHash -> do
         unless (verifyHash pageHash) $ error "invalid hash"
@@ -94,21 +94,29 @@ showHash = T.pack . show . unPageHash
 mkHash :: T.Text -> PageHash
 mkHash = PageHash . hash
 
-createPage :: T.Text -> IO PageHash
+createPage :: T.Text -> IO (PageId, PageHash)
 createPage contents = do
     pageId <- newPageId
-    let pageHash = mkHash contents
-    let filepath = "perma" </> T.unpack (showHash pageHash)
-    exists <- liftIO $ doesFileExist filepath
-    when exists $ error "file already exists"
-    T.writeFile filepath contents
-    return $ mkHash contents
+    pageHash <- writeNewPageInstanceToDisk contents
+    appendVersionToLog pageId pageHash
+    return (pageId, pageHash)
 
-editPage :: PageId -> T.Text -> IO PageHash
+editPage :: PageId -> T.Text -> IO (PageId, PageHash)
 editPage pageId contents = do
+    pageHash <- writeNewPageInstanceToDisk contents
+    appendVersionToLog pageId pageHash
+    return (pageId, pageHash)
+
+writeNewPageInstanceToDisk :: T.Text -> IO PageHash
+writeNewPageInstanceToDisk contents = do
     let pageHash = mkHash contents
     let filepath = "perma" </> T.unpack (showHash pageHash)
     exists <- liftIO $ doesFileExist filepath
     when exists $ error "file already exists"
     T.writeFile filepath contents
-    return $ mkHash contents
+    return pageHash
+
+appendVersionToLog :: PageId -> PageHash -> IO ()
+appendVersionToLog pageId pageHash = do
+    let filepath = "pages" </> T.unpack (toPathPiece pageId)
+    T.appendFile filepath $ showHash pageHash <> "\n"
