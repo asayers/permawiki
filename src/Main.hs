@@ -3,6 +3,7 @@
 
 module Main where
 
+import Control.Lens
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Maybe
@@ -35,54 +36,60 @@ main :: IO ()
 main = runSpock 9876 $ spockT id $ do
     get root $
         text "Hello World!"
-    get "new" $ newPageView
+    get "new" $
+        html newPageView
     post "new" $ do
         contents <- param' "contents"
         (pageId, pageHash) <- liftIO $ createPage contents
         redirect $ "/perma/" <> showHash pageHash
-    get ("edit" <//> var) $ editPageView
+    get ("edit" <//> var) $
+        html . editPageView
     post ("edit" <//> var) $ \pageId -> do
         contents <- param' "contents"
         (pageId, pageHash) <- liftIO $ editPage pageId contents
         redirect $ "/perma/" <> showHash pageHash
     get ("page" <//> var) $ \pageId -> do
+        versions <- liftIO $ getPageVersions pageId
         contents <- liftIO $ runMaybeT $
-            MaybeT (getLatestPageVersion pageId) >>=
+            MaybeT (return $ preview (ix 0) (reverse versions)) >>=
             MaybeT . getPageInstanceContents
-        markdown $ pageHeader pageId <> fromMaybe "not found" contents
+        markdown $ pageHeader pageId versions <> fromMaybe "not found" contents
     get ("perma" <//> var) $ \pageHash -> do
         contents <- liftIO $ getPageInstanceContents pageHash
         markdown $ fromMaybe "not found" contents
 
-pageHeader :: PageId -> T.Text
-pageHeader pageId = T.unlines
-    [ "You're viewing page `" <> toPathPiece pageId <> "`. "
-    , "[Edit](/edit/" <> toPathPiece pageId <> ")"
+pageHeader :: PageId -> [PageHash] -> T.Text
+pageHeader pageId versions = T.unlines $
+    [ "You're viewing page `" <> toPathPiece pageId <> "`. Versions:"
+    , ""
+    ] ++ map (ppVersion . showHash) versions ++
+    [ "- [Create new version](/edit/" <> toPathPiece pageId <> ")"
+    , "<hr>"
+    ]
+  where
+    ppVersion v = "- [" <> v <> "](/perma/" <> v <> ")"
+
+newPageView :: T.Text
+newPageView = T.unlines
+    [ "<h1>New page</h1>"
+    , "<form action='/new' method='POST'>"
+    , "Contents:<br>"
+    , "<input type='text' name='contents'>"
+    , "<br><br>"
+    , "<input type='submit' value='Submit'>"
+    , "</form>"
     ]
 
-newPageView :: ActionT IO a
-newPageView = do
-    html $ T.unlines
-        [ "<h1>New page</h1>"
-        , "<form action='/new' method='POST'>"
-        , "Contents:<br>"
-        , "<input type='text' name='contents'>"
-        , "<br><br>"
-        , "<input type='submit' value='Submit'>"
-        , "</form>"
-        ]
-
-editPageView :: PageId -> ActionT IO a
-editPageView pageId = do
-    html $ T.unlines
-        [ "<h1>Page Id: " <> toPathPiece pageId <> "</h1>"
-        , "<form action='/edit/" <> toPathPiece pageId <> "' method='POST'>"
-        , "Contents:<br>"
-        , "<input type='text' name='contents'>"
-        , "<br><br>"
-        , "<input type='submit' value='Submit'>"
-        , "</form>"
-        ]
+editPageView :: PageId -> T.Text
+editPageView pageId = T.unlines
+    [ "<h1>Page Id: " <> toPathPiece pageId <> "</h1>"
+    , "<form action='/edit/" <> toPathPiece pageId <> "' method='POST'>"
+    , "Contents:<br>"
+    , "<input type='text' name='contents'>"
+    , "<br><br>"
+    , "<input type='submit' value='Submit'>"
+    , "</form>"
+    ]
 
 newtype PageId = PageId { unPageId :: UUID.UUID } deriving (Show, Typeable)
 newtype PageHash = PageHash { unPageHash :: Int } deriving (Show, PathPiece)

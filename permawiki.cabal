@@ -25,6 +25,7 @@ executable permawiki
                      , path-pieces
                      , uuid
                      , data-default-class
+                     , lens
                      , blaze-html
                      , markdown
                      , Spock >= 0.7.9
