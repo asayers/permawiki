@@ -5,13 +5,16 @@ module Main where
 
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Maybe
 import Data.Aeson
 import Data.Default.Class (def)
 import Data.Hashable
+import Data.Maybe
 import Data.Monoid
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Read as T
 import Data.Typeable
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
@@ -42,14 +45,20 @@ main = runSpock 9876 $ spockT id $ do
         contents <- param' "contents"
         (pageId, pageHash) <- liftIO $ editPage pageId contents
         redirect $ "/perma/" <> showHash pageHash
+    get ("page" <//> var) $ \pageId -> do
+        contents <- liftIO $ runMaybeT $
+            MaybeT (getLatestPageVersion pageId) >>=
+            MaybeT . getPageInstanceContents
+        markdown $ pageHeader pageId <> fromMaybe "not found" contents
     get ("perma" <//> var) $ \pageHash -> do
-        unless (verifyHash pageHash) $ error "invalid hash"
-        let filepath = "perma" </> pageHash
-        exists <- liftIO $ doesFileExist filepath
-        unless exists $ error "file not found"
-        contents <- liftIO $ T.readFile filepath
-        unless (verifyContents pageHash contents) $ error "invalid contents"
-        markdown contents
+        contents <- liftIO $ getPageInstanceContents pageHash
+        markdown $ fromMaybe "not found" contents
+
+pageHeader :: PageId -> T.Text
+pageHeader pageId = T.unlines
+    [ "You're viewing page `" <> toPathPiece pageId <> "`. "
+    , "[Edit](/edit/" <> toPathPiece pageId <> ")"
+    ]
 
 newPageView :: ActionT IO a
 newPageView = do
@@ -75,11 +84,8 @@ editPageView pageId = do
         , "</form>"
         ]
 
-verifyHash _ = True
-verifyContents _ _ = True
-
-newtype PageId = PageId { unPageId :: UUID.UUID } deriving Show
-newtype PageHash = PageHash { unPageHash :: Int } deriving Show
+newtype PageId = PageId { unPageId :: UUID.UUID } deriving (Show, Typeable)
+newtype PageHash = PageHash { unPageHash :: Int } deriving (Show, PathPiece)
 
 instance PathPiece PageId where
     fromPathPiece = fmap PageId . UUID.fromString . T.unpack
@@ -90,6 +96,10 @@ newPageId = PageId <$> UUID.nextRandom
 
 showHash :: PageHash -> T.Text
 showHash = T.pack . show . unPageHash
+
+readHash :: T.Text -> Maybe PageHash
+readHash txt =
+    PageHash <$> either (const Nothing) (Just . fst) (T.decimal txt)
 
 mkHash :: T.Text -> PageHash
 mkHash = PageHash . hash
@@ -116,7 +126,36 @@ writeNewPageInstanceToDisk contents = do
     T.writeFile filepath contents
     return pageHash
 
+pageFilepath :: PageId -> FilePath
+pageFilepath pageId = "pages" </> T.unpack (toPathPiece pageId)
+
+pageInstanceFilepath :: PageHash -> FilePath
+pageInstanceFilepath pageHash = "perma" </> T.unpack (showHash pageHash)
+
 appendVersionToLog :: PageId -> PageHash -> IO ()
 appendVersionToLog pageId pageHash = do
-    let filepath = "pages" </> T.unpack (toPathPiece pageId)
-    T.appendFile filepath $ showHash pageHash <> "\n"
+    T.appendFile (pageFilepath pageId) $ showHash pageHash <> "\n"
+
+getLatestPageVersion :: PageId -> IO (Maybe PageHash)
+getLatestPageVersion pageId = do
+    versions <- getPageVersions pageId
+    return $ case reverse versions of
+        []    -> Nothing
+        (x:_) -> Just x
+
+getPageVersions :: PageId -> IO [PageHash]
+getPageVersions pageId = do
+    contents <- safeReadFile $ pageFilepath pageId
+    let versionsTxt = maybe [] T.lines contents
+    return $ mapMaybe readHash versionsTxt
+
+getPageInstanceContents :: PageHash -> IO (Maybe T.Text)
+getPageInstanceContents pageHash = do
+    safeReadFile $ pageInstanceFilepath pageHash
+
+safeReadFile :: FilePath -> IO (Maybe T.Text)
+safeReadFile filepath = do
+    exists <- doesFileExist filepath
+    if exists
+        then Just <$> T.readFile filepath
+        else return Nothing
