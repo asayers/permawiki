@@ -24,7 +24,7 @@ import qualified Text.Blaze.Html4.Strict.Attributes as A
 import Text.Blaze.Html.Renderer.Text (renderHtml)
 import qualified Text.Markdown as MD
 import System.Directory
-import System.FilePath ((</>))
+import System.FilePath ((</>), takeBaseName)
 import Web.PathPieces
 import Web.Spock.Safe
 import Web.Spock.Shared
@@ -34,9 +34,9 @@ renderMarkdown = TL.toStrict . renderHtml . MD.markdown def . TL.fromStrict
 
 main :: IO ()
 main = runSpock 9876 $ spockT id $ do
-    get root $
-        text "Hello World!"
-
+    get root $ do
+        pages <- liftIO getPages
+        html $ renderMarkdown $ rootView pages
     get "new" $
         html newPageView
     post "new" $ do
@@ -72,6 +72,20 @@ main = runSpock 9876 $ spockT id $ do
 
 -- TODO: Status 404
 notFound = text "not found"
+
+rootView :: [PageId] -> T.Text
+rootView pageIds = T.unlines $
+    [ "# Welcome to PermaWiki"
+    , ""
+    , "Lorem ipsum dolor sit amet..."
+    , ""
+    , "## Pages"
+    , ""
+    ] ++ map (ppPage . toPathPiece) pageIds ++
+    [ "- [Create new page](/new/)"
+    ]
+  where
+    ppPage p = "- [" <> p <> "](/page/" <> p <> ")"
 
 pageHeader :: PageId -> [PageHash] -> T.Text
 pageHeader pageId versions = T.unlines $
@@ -174,6 +188,11 @@ getPageVersions pageId = do
 getPageInstanceContents :: PageHash -> IO (Maybe T.Text)
 getPageInstanceContents pageHash = do
     safeReadFile $ pageInstanceFilepath pageHash
+
+getPages :: IO [PageId]
+getPages = do
+    filenames <- getDirectoryContents "pages"
+    return $ mapMaybe (fromPathPiece . T.pack . takeBaseName) filenames
 
 safeReadFile :: FilePath -> IO (Maybe T.Text)
 safeReadFile filepath = do
